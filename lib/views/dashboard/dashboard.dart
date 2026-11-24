@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/custom/ip_purity_card.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -358,6 +359,7 @@ class _MobileDashboard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   spacing: gap,
                   children: [
+                    const IpPurityCard(),
                     for (final widget in widgets)
                       RepaintBoundary(
                         key: cardKeyOf(widget),
