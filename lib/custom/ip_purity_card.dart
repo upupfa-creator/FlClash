@@ -18,17 +18,42 @@ class IpPurityCard extends StatefulWidget {
 }
 
 class _IpPurityCardState extends State<IpPurityCard> {
+  static const _cardBg = Color(0xFF161821);
+  static const _tileBg = Color(0xFF1F2330);
+  static const _trackBg = Color(0xFF0E1017);
+  static const _accentBlue = Color(0xFF3B82F6);
+  static const _okGreen = Color(0xFF34D399);
+  static const _warnAmber = Color(0xFFFBBF24);
+  static const _dangerRed = Color(0xFFF87171);
+  static const _textPrimary = Color(0xFFF1F5F9);
+  static const _textMuted = Color(0xFF94A3B8);
+
   IpPurityResult? _result;
   IpPurityConfig _config = const IpPurityConfig();
   List<int> _history = const [];
   int _tabIndex = 0;
   bool _loading = false;
   String? _error;
+  String? _notice;
+
+  final _titleCtrl = TextEditingController();
+  final _expiryCtrl = TextEditingController();
+  final _ipapiCtrl = TextEditingController();
+  final _abuseCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _initAndCheck();
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _expiryCtrl.dispose();
+    _ipapiCtrl.dispose();
+    _abuseCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -41,10 +66,18 @@ class _IpPurityCardState extends State<IpPurityCard> {
     }
   }
 
+  void _syncControllers(IpPurityConfig cfg) {
+    _titleCtrl.text = cfg.customTitle;
+    _expiryCtrl.text = cfg.expiryDateIso;
+    _ipapiCtrl.text = cfg.ipapiKey;
+    _abuseCtrl.text = cfg.abuseIpdbKey;
+  }
+
   Future<void> _initAndCheck() async {
     final cfg = await IpPurityService.instance.loadConfig();
     final hist = await IpPurityService.instance.loadLatencyHistory();
     if (!mounted) return;
+    _syncControllers(cfg);
     setState(() {
       _config = cfg;
       _history = hist;
@@ -52,6 +85,15 @@ class _IpPurityCardState extends State<IpPurityCard> {
     if (cfg.autoCheck) {
       await _runCheck(forceRefresh: false);
     }
+  }
+
+  void _showNotice(String msg) {
+    setState(() => _notice = msg);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted && _notice == msg) {
+        setState(() => _notice = null);
+      }
+    });
   }
 
   Future<void> _runCheck({required bool forceRefresh}) async {
@@ -89,7 +131,7 @@ class _IpPurityCardState extends State<IpPurityCard> {
     await IpPurityService.instance.saveConfig(nextCfg);
     if (!mounted) return;
     setState(() => _config = nextCfg);
-    _showSnack(nextLocked.isEmpty ? '已解除目标 IP 锁定' : '已锁定目标 IP：$nextLocked');
+    _showNotice(nextLocked.isEmpty ? '已解除目标 IP 锁定' : '已锁定目标 IP：$nextLocked');
   }
 
   Future<void> _copyReport() async {
@@ -101,196 +143,91 @@ class _IpPurityCardState extends State<IpPurityCard> {
       ),
     );
     if (!mounted) return;
-    _showSnack('已复制完整环境体检单到剪贴板');
+    _showNotice('已复制完整环境体检单到剪贴板');
   }
 
-  void _showSnack(String msg) {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    if (messenger != null) {
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          duration: const Duration(seconds: 2),
+  Future<void> _saveInlineConfig() async {
+    final updated = _config.copyWith(
+      customTitle: _titleCtrl.text.trim().isEmpty
+          ? 'Pro 极客监控台'
+          : _titleCtrl.text.trim(),
+      expiryDateIso: _expiryCtrl.text.trim(),
+      ipapiKey: _ipapiCtrl.text.trim(),
+      abuseIpdbKey: _abuseCtrl.text.trim(),
+    );
+    await IpPurityService.instance.saveConfig(updated);
+    if (!mounted) return;
+    setState(() {
+      _config = updated;
+      _tabIndex = 0;
+    });
+    _showNotice('设置已保存，正在重测...');
+    await _runCheck(forceRefresh: true);
+  }
+
+  Widget _buildPillAction({
+    required String label,
+    required VoidCallback? onTap,
+    bool active = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: active ? _accentBlue.withValues(alpha: 0.22) : _tileBg,
+          borderRadius: BorderRadius.circular(10),
         ),
-      );
-    }
-  }
-
-  Future<void> _openSettingsDialog() async {
-    final ipapiCtrl = TextEditingController(text: _config.ipapiKey);
-    final abuseCtrl = TextEditingController(text: _config.abuseIpdbKey);
-    final titleCtrl = TextEditingController(text: _config.customTitle);
-    final expiryCtrl = TextEditingController(text: _config.expiryDateIso);
-    bool autoCheck = _config.autoCheck;
-    bool showIpv6 = _config.showIpv6;
-    bool showTz = _config.showTimezone;
-    bool showExpiry = _config.showExpiry;
-    int threshold = _config.riskThreshold;
-
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlg) => AlertDialog(
-          title: const Text('Pro 极客监控台设置'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleCtrl,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: '卡片专属名称',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: expiryCtrl,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: '静态 IP 到期日期（YYYY-MM-DD）',
-                    hintText: '例如 2026-12-21',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: ipapiCtrl,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'ipapi.is API Key（推荐）',
-                    hintText: '免费每日 1000 次',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: abuseCtrl,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'AbuseIPDB API Key（可选）',
-                    hintText: '免费每日 1000 次',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('启动/切节点自动体检'),
-                  value: autoCheck,
-                  onChanged: (v) => setDlg(() => autoCheck = v),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('显示 IPv6 防泄漏检测'),
-                  value: showIpv6,
-                  onChanged: (v) => setDlg(() => showIpv6 = v),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('显示手机/IP 时区核对'),
-                  value: showTz,
-                  onChanged: (v) => setDlg(() => showTz = v),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('显示 IP 到期倒计时'),
-                  value: showExpiry,
-                  onChanged: (v) => setDlg(() => showExpiry = v),
-                ),
-                Row(
-                  children: [
-                    const Expanded(child: Text('高危风险分阈值')),
-                    DropdownButton<int>(
-                      value: threshold,
-                      items: const [10, 25, 50, 75]
-                          .map((v) => DropdownMenuItem(value: v, child: Text('$v%')))
-                          .toList(),
-                      onChanged: (v) {
-                        if (v != null) setDlg(() => threshold = v);
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: active ? const Color(0xFF93C5FD) : _textPrimary,
+            fontSize: 11,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('保存并重测'),
-            ),
-          ],
         ),
       ),
     );
-
-    if (saved == true) {
-      final updated = _config.copyWith(
-        ipapiKey: ipapiCtrl.text,
-        abuseIpdbKey: abuseCtrl.text,
-        customTitle: titleCtrl.text.trim().isEmpty
-            ? 'Pro 极客监控台'
-            : titleCtrl.text.trim(),
-        expiryDateIso: expiryCtrl.text,
-        autoCheck: autoCheck,
-        showIpv6: showIpv6,
-        showTimezone: showTz,
-        showExpiry: showExpiry,
-        riskThreshold: threshold,
-      );
-      await IpPurityService.instance.saveConfig(updated);
-      if (!mounted) return;
-      setState(() => _config = updated);
-      await _runCheck(forceRefresh: true);
-    }
-
-    ipapiCtrl.dispose();
-    abuseCtrl.dispose();
-    titleCtrl.dispose();
-    expiryCtrl.dispose();
   }
 
   Widget _buildMetricTile({
     required String label,
     required String value,
     required Color valueColor,
-    required Color tileBg,
   }) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: tileBg,
+        color: _tileBg,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: _textMuted, fontSize: 11),
+          ),
           const SizedBox(height: 4),
           Text(
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: valueColor),
+            style: TextStyle(color: valueColor, fontSize: 13),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTabBar(ColorScheme scheme) {
+  Widget _buildTabBar() {
     const labels = ['风控体检', 'AI/解锁', '延迟趋势', '自定义'];
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerLowest,
+        color: _trackBg,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -300,18 +237,17 @@ class _IpPurityCardState extends State<IpPurityCard> {
               child: GestureDetector(
                 onTap: () => setState(() => _tabIndex = i),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  padding: const EdgeInsets.symmetric(vertical: 7),
                   decoration: BoxDecoration(
-                    color: _tabIndex == i ? scheme.primary : Colors.transparent,
+                    color: _tabIndex == i ? _accentBlue : Colors.transparent,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     labels[i],
                     style: TextStyle(
-                      color: _tabIndex == i
-                          ? scheme.onPrimary
-                          : scheme.onSurfaceVariant,
+                      color: _tabIndex == i ? Colors.white : _textMuted,
+                      fontSize: 12,
                     ),
                   ),
                 ),
@@ -322,10 +258,202 @@ class _IpPurityCardState extends State<IpPurityCard> {
     );
   }
 
+  Widget _buildInputField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: _textMuted, fontSize: 11)),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: _trackBg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFF2B3040)),
+          ),
+          child: TextField(
+            controller: controller,
+            autocorrect: false,
+            style: const TextStyle(color: _textPrimary, fontSize: 12),
+            decoration: InputDecoration(
+              hintText: hint,
+              hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 9),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildToggleRow({
+    required String label,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return GestureDetector(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: const TextStyle(color: _textPrimary, fontSize: 12)),
+            Container(
+              width: 38,
+              height: 22,
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: value ? _accentBlue : const Color(0xFF334155),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInlineSettings() {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _tileBg,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildInputField(
+              controller: _titleCtrl,
+              label: '卡片专属名称',
+              hint: '例如 Pro 极客监控台',
+            ),
+            const SizedBox(height: 8),
+            _buildInputField(
+              controller: _expiryCtrl,
+              label: '静态 IP 到期日期（YYYY-MM-DD）',
+              hint: '例如 2026-12-21',
+            ),
+            const SizedBox(height: 8),
+            _buildInputField(
+              controller: _ipapiCtrl,
+              label: 'ipapi.is API Key（推荐，每日 1000 次免费）',
+              hint: '粘贴你的 ipapi.is Key',
+            ),
+            const SizedBox(height: 8),
+            _buildInputField(
+              controller: _abuseCtrl,
+              label: 'AbuseIPDB API Key（可选，每日 1000 次免费）',
+              hint: '粘贴你的 AbuseIPDB Key',
+            ),
+            const SizedBox(height: 10),
+            _buildToggleRow(
+              label: '启动 / 切节点自动体检',
+              value: _config.autoCheck,
+              onChanged: (v) =>
+                  setState(() => _config = _config.copyWith(autoCheck: v)),
+            ),
+            _buildToggleRow(
+              label: '显示 IPv6 防泄漏检测',
+              value: _config.showIpv6,
+              onChanged: (v) =>
+                  setState(() => _config = _config.copyWith(showIpv6: v)),
+            ),
+            _buildToggleRow(
+              label: '显示手机 / IP 时区核对',
+              value: _config.showTimezone,
+              onChanged: (v) =>
+                  setState(() => _config = _config.copyWith(showTimezone: v)),
+            ),
+            _buildToggleRow(
+              label: '显示 IP 到期倒计时',
+              value: _config.showExpiry,
+              onChanged: (v) =>
+                  setState(() => _config = _config.copyWith(showExpiry: v)),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text(
+                  '高危阈值',
+                  style: TextStyle(color: _textMuted, fontSize: 11),
+                ),
+                const SizedBox(width: 8),
+                for (final v in const [10, 25, 50, 75])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: GestureDetector(
+                      onTap: () => setState(
+                        () => _config = _config.copyWith(riskThreshold: v),
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _config.riskThreshold == v
+                              ? _accentBlue
+                              : _trackBg,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '$v%',
+                          style: TextStyle(
+                            color: _config.riskThreshold == v
+                                ? Colors.white
+                                : _textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            GestureDetector(
+              onTap: _saveInlineConfig,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: _accentBlue,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                alignment: Alignment.center,
+                child: const Text(
+                  '保存设置并立即重测',
+                  style: TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final tileBg = scheme.surfaceContainerHighest.withValues(alpha: 0.45);
     final result = _result;
     final drifted = result != null &&
         _config.lockedIp.isNotEmpty &&
@@ -338,276 +466,314 @@ class _IpPurityCardState extends State<IpPurityCard> {
     final isDanger = level == IpPurityLevel.highRisk;
     final remainingDays = _config.remainingDays;
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide(
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
           color: isDanger
-              ? scheme.error
-              : scheme.primary.withValues(alpha: 0.55),
-          width: 1.4,
+              ? _dangerRed.withValues(alpha: 0.85)
+              : _accentBlue.withValues(alpha: 0.45),
+          width: 1.2,
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.shield_outlined,
-                  color: isDanger ? scheme.error : scheme.primary,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: isDanger ? _dangerRed : _okGreen,
+                  shape: BoxShape.circle,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _config.customTitle,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _textPrimary,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              if (_config.showExpiry && remainingDays != null)
+                Container(
+                  margin: const EdgeInsets.only(right: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: (remainingDays <= 3 ? _warnAmber : _accentBlue)
+                        .withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   child: Text(
-                    _config.customTitle,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (_config.showExpiry && remainingDays != null)
-                  Container(
-                    margin: const EdgeInsets.only(right: 6),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: (remainingDays <= 3
-                              ? Colors.orange
-                              : scheme.primary)
-                          .withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      remainingDays <= 0
-                          ? 'IP 已到期'
-                          : '剩 $remainingDays 天',
+                    remainingDays <= 0 ? '已到期' : '剩$remainingDays天',
+                    style: TextStyle(
+                      color: remainingDays <= 3
+                          ? _warnAmber
+                          : const Color(0xFF93C5FD),
+                      fontSize: 11,
                     ),
                   ),
-                IconButton(
-                  tooltip: _config.lockedIp.isEmpty ? '锁定当前 IP' : '解除 IP 锁定',
-                  icon: Icon(
-                    _config.lockedIp.isEmpty
-                        ? Icons.lock_open_outlined
-                        : Icons.lock,
-                    color: _config.lockedIp.isEmpty
-                        ? scheme.onSurfaceVariant
-                        : scheme.primary,
+                ),
+              _buildPillAction(
+                label: _config.lockedIp.isEmpty ? '锁IP' : '已锁',
+                active: _config.lockedIp.isNotEmpty,
+                onTap: result == null ? null : _toggleLockIp,
+              ),
+              const SizedBox(width: 6),
+              _buildPillAction(
+                label: '复制',
+                onTap: result == null ? null : _copyReport,
+              ),
+              const SizedBox(width: 6),
+              _buildPillAction(
+                label: _loading ? '测速中' : '刷新',
+                active: _loading,
+                onTap: _loading ? null : () => _runCheck(forceRefresh: true),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildTabBar(),
+          const SizedBox(height: 12),
+          if (_notice != null)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: _accentBlue.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                _notice!,
+                style: const TextStyle(color: Color(0xFF93C5FD), fontSize: 11),
+              ),
+            ),
+          if (drifted || (_config.showIpv6 && (result?.hasIpv6Leak ?? false)))
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _dangerRed.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _dangerRed.withValues(alpha: 0.5),
+                ),
+              ),
+              child: Text(
+                drifted
+                    ? '警报：出口 IP 已漂移为 ${result!.ip}（锁定目标 ${_config.lockedIp}），请勿操作账号！'
+                    : '警报：检测到 IPv6 透传泄漏（${result?.ipv6Address}），存在关联风险！',
+                style: const TextStyle(color: _dangerRed, fontSize: 12),
+              ),
+            ),
+          if (_tabIndex == 3)
+            _buildInlineSettings()
+          else if (_error != null)
+            Text(
+              _error!,
+              style: const TextStyle(color: _dangerRed, fontSize: 12),
+            )
+          else if (result == null)
+            Text(
+              _loading ? '正在执行全项风控体检与平台测速…' : '点击右上角“刷新”开始全面体检',
+              style: const TextStyle(color: _textMuted, fontSize: 12),
+            )
+          else if (_tabIndex == 0) ...[
+            GridView.count(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 2.35,
+              children: [
+                if (_config.showIpv6)
+                  _buildMetricTile(
+                    label: 'IPv6 防泄漏',
+                    value: result.hasIpv6Leak ? '检测到泄漏' : '已完全隔离',
+                    valueColor: result.hasIpv6Leak ? _dangerRed : _okGreen,
                   ),
-                  onPressed: result == null ? null : _toggleLockIp,
+                if (_config.showTimezone)
+                  _buildMetricTile(
+                    label: '时区一致性',
+                    value: result.timezoneSummary,
+                    valueColor:
+                        result.isTimezoneAligned ? _okGreen : _warnAmber,
+                  ),
+                _buildMetricTile(
+                  label: 'AbuseIPDB 风险',
+                  value: result.abuseIpdbScore != null
+                      ? '${result.abuseIpdbScore}% (${result.abuseIpdbReports ?? 0}次)'
+                      : '未填 Key',
+                  valueColor: (result.abuseIpdbScore ?? 0) >=
+                          _config.riskThreshold
+                      ? _dangerRed
+                      : _okGreen,
                 ),
-                IconButton(
-                  tooltip: '复制体检报告',
-                  icon: const Icon(Icons.copy_outlined),
-                  onPressed: result == null ? null : _copyReport,
-                ),
-                IconButton(
-                  tooltip: '立即全检',
-                  icon: _loading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh),
-                  onPressed: _loading ? null : () => _runCheck(forceRefresh: true),
+                _buildMetricTile(
+                  label: '网段滥用分',
+                  value: result.abuserScoreText.isNotEmpty
+                      ? result.abuserScoreText
+                      : (result.hasFullIpapiData ? '低风险' : '待填 Key'),
+                  valueColor: _textPrimary,
                 ),
               ],
             ),
             const SizedBox(height: 10),
-            _buildTabBar(scheme),
-            const SizedBox(height: 10),
-            if (drifted || (_config.showIpv6 && (result?.hasIpv6Leak ?? false)))
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: scheme.errorContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  drifted
-                      ? '警报：出口 IP 已漂移为 ${result!.ip}（锁定目标 ${_config.lockedIp}），请勿操作账号！'
-                      : '警报：检测到 IPv6 透传泄漏（${result?.ipv6Address}），存在关联风险！',
-                  style: TextStyle(color: scheme.onErrorContainer),
-                ),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: result.riskTags
+                  .map(
+                    (t) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _tileBg,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        t,
+                        style: const TextStyle(
+                          color: _textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ] else if (_tabIndex == 1) ...[
+            GridView.count(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 2.6,
+              children: result.platforms
+                  .map(
+                    (p) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _tileBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  p.name,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: _textPrimary,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  p.statusLabel,
+                                  style: TextStyle(
+                                    color: p.ok ? _okGreen : _dangerRed,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            p.latencyMs != null ? '${p.latencyMs}ms' : '--',
+                            style: const TextStyle(
+                              color: _textMuted,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ] else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _tileBg,
+                borderRadius: BorderRadius.circular(14),
               ),
-            if (_error != null)
-              Text(_error!, style: TextStyle(color: scheme.error))
-            else if (result == null)
-              Text(_loading ? '正在执行全项风控体检与平台测速…' : '点击右上角刷新按钮开始全检')
-            else if (_tabIndex == 0) ...[
-              GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: 2,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 2.35,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (_config.showIpv6)
-                    _buildMetricTile(
-                      label: 'IPv6 防泄漏',
-                      value: result.hasIpv6Leak ? '检测到泄漏' : '已完全隔离',
-                      valueColor: result.hasIpv6Leak
-                          ? scheme.error
-                          : Colors.green.shade400,
-                      tileBg: tileBg,
-                    ),
-                  if (_config.showTimezone)
-                    _buildMetricTile(
-                      label: '时区一致性',
-                      value: result.timezoneSummary,
-                      valueColor: result.isTimezoneAligned
-                          ? Colors.green.shade400
-                          : Colors.orange.shade400,
-                      tileBg: tileBg,
-                    ),
-                  _buildMetricTile(
-                    label: 'AbuseIPDB 风险',
-                    value: result.abuseIpdbScore != null
-                        ? '${result.abuseIpdbScore}% (${result.abuseIpdbReports ?? 0}次)'
-                        : '未填 Key',
-                    valueColor: (result.abuseIpdbScore ?? 0) >=
-                            _config.riskThreshold
-                        ? scheme.error
-                        : Colors.green.shade400,
-                    tileBg: tileBg,
+                  Text(
+                    _history.isEmpty
+                        ? '近 7 次综合延迟趋势（暂无记录）'
+                        : '近 ${_history.length} 次综合延迟趋势（均值 ${_history.reduce((a, b) => a + b) ~/ _history.length}ms）',
+                    style: const TextStyle(color: _textMuted, fontSize: 12),
                   ),
-                  _buildMetricTile(
-                    label: '网段滥用分',
-                    value: result.abuserScoreText.isNotEmpty
-                        ? result.abuserScoreText
-                        : (result.hasFullIpapiData ? '低风险' : '待填 Key'),
-                    valueColor: scheme.onSurface,
-                    tileBg: tileBg,
-                  ),
+                  const SizedBox(height: 10),
+                  if (_history.isNotEmpty)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: _history.map((ms) {
+                        final maxMs =
+                            _history.reduce((a, b) => a > b ? a : b);
+                        final ratio =
+                            maxMs > 0 ? (ms / maxMs).clamp(0.2, 1.0) : 0.5;
+                        return Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 3),
+                            child: Column(
+                              children: [
+                                Text(
+                                  '$ms',
+                                  style: const TextStyle(
+                                    color: _textPrimary,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Container(
+                                  height: 44 * ratio,
+                                  decoration: BoxDecoration(
+                                    color: _accentBlue,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: result.riskTags
-                    .map(
-                      (t) => Chip(
-                        label: Text(t),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    )
-                    .toList(),
-              ),
-            ] else if (_tabIndex == 1) ...[
-              GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: 2,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 2.6,
-                children: result.platforms
-                    .map(
-                      (p) => Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: tileBg,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(p.name, overflow: TextOverflow.ellipsis),
-                                  Text(
-                                    p.statusLabel,
-                                    style: TextStyle(
-                                      color: p.ok
-                                          ? Colors.green.shade400
-                                          : scheme.error,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Text(p.latencyMs != null ? '${p.latencyMs}ms' : '--'),
-                          ],
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
-            ] else if (_tabIndex == 2) ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: tileBg,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _history.isEmpty
-                          ? '近 7 次综合延迟趋势（暂无记录）'
-                          : '近 ${_history.length} 次综合延迟趋势（均值 ${_history.reduce((a, b) => a + b) ~/ _history.length}ms）',
-                    ),
-                    const SizedBox(height: 8),
-                    if (_history.isNotEmpty)
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: _history.map((ms) {
-                          final maxMs = _history.reduce((a, b) => a > b ? a : b);
-                          final ratio = maxMs > 0 ? (ms / maxMs).clamp(0.2, 1.0) : 0.5;
-                          return Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 3),
-                              child: Column(
-                                children: [
-                                  Text('$ms'),
-                                  const SizedBox(height: 4),
-                                  Container(
-                                    height: 44 * ratio,
-                                    decoration: BoxDecoration(
-                                      color: scheme.primary,
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                  ],
-                ),
-              ),
-            ] else ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _openSettingsDialog,
-                      icon: const Icon(Icons.tune),
-                      label: const Text('打开 API Key / 到期日 / 模块开关设置'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
