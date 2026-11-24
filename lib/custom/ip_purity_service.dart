@@ -191,6 +191,14 @@ class IpPurityResult {
 
   factory IpPurityResult.fromJson(Map<String, dynamic> json) {
     final rawPlatforms = (json['platforms'] as List<dynamic>?) ?? const [];
+    final parsedPlatforms = <PlatformProbeResult>[];
+    for (final item in rawPlatforms) {
+      if (item is Map) {
+        parsedPlatforms.add(
+          PlatformProbeResult.fromJson(Map<String, dynamic>.from(item)),
+        );
+      }
+    }
     return IpPurityResult(
       ip: json['ip'] as String? ?? '',
       ipv6Address: json['ipv6Address'] as String?,
@@ -214,10 +222,7 @@ class IpPurityResult {
       checkedAt: DateTime.tryParse(json['checkedAt'] as String? ?? '') ??
           DateTime.now(),
       hasFullIpapiData: json['hasFullIpapiData'] as bool? ?? false,
-      platforms: rawPlatforms
-          .whereType>()
-          .map(PlatformProbeResult.fromJson)
-          .toList(),
+      platforms: parsedPlatforms,
     );
   }
 }
@@ -306,15 +311,15 @@ class IpPurityService {
   static const _kHistoryLatencies = 'custom_pro_latency_history';
   static const _kCachePrefix = 'custom_pro_cache_';
 
-  static const _probeTargets = <(String, String)>[
-    ('ChatGPT', 'https://chatgpt.com/cdn-cgi/trace'),
-    ('Gemini', 'https://gemini.google.com/'),
-    ('Claude', 'https://claude.ai/cdn-cgi/trace'),
-    ('Netflix', 'https://www.netflix.com/title/80018499'),
-    ('TikTok', 'https://www.tiktok.com/'),
-    ('YouTube', 'https://www.youtube.com/generate_204'),
-    ('X', 'https://x.com/'),
-    ('IG', 'https://www.instagram.com/'),
+  static const _probeTargets = [
+    ['ChatGPT', 'https://chatgpt.com/cdn-cgi/trace'],
+    ['Gemini', 'https://gemini.google.com/'],
+    ['Claude', 'https://claude.ai/cdn-cgi/trace'],
+    ['Netflix', 'https://www.netflix.com/title/80018499'],
+    ['TikTok', 'https://www.tiktok.com/'],
+    ['YouTube', 'https://www.youtube.com/generate_204'],
+    ['X', 'https://x.com/'],
+    ['IG', 'https://www.instagram.com/'],
   ];
 
   Future<IpPurityConfig> loadConfig() async {
@@ -387,11 +392,14 @@ class IpPurityService {
 
   Future<String?> _detectIpv6(Dio dio) async {
     try {
-      final res = await dio.get<String>(
+      final res = await dio.get(
         'https://api6.ipify.org',
-        options: Options(receiveTimeout: const Duration(seconds: 4)),
+        options: Options(
+          responseType: ResponseType.plain,
+          receiveTimeout: const Duration(seconds: 4),
+        ),
       );
-      final ip = (res.data ?? '').trim();
+      final ip = (res.data?.toString() ?? '').trim();
       if (ip.contains(':')) {
         return ip;
       }
@@ -403,10 +411,11 @@ class IpPurityService {
     final dio = _buildDio(localProxyPort: localProxyPort, timeoutSeconds: 6);
     final results = await Future.wait(
       _probeTargets.map((target) async {
-        final (name, url) = target;
+        final name = target[0];
+        final url = target[1];
         final sw = Stopwatch()..start();
         try {
-          final res = await dio.get<dynamic>(
+          final res = await dio.get(
             url,
             options: Options(
               responseType: ResponseType.plain,
@@ -453,8 +462,12 @@ class IpPurityService {
       }),
     );
 
-    final validMs =
-        results.map((e) => e.latencyMs).whereType<int>().toList();
+    final validMs = <int>[];
+    for (final r in results) {
+      if (r.latencyMs != null) {
+        validMs.add(r.latencyMs!);
+      }
+    }
     if (validMs.isNotEmpty) {
       final avg = validMs.reduce((a, b) => a + b) ~/ validMs.length;
       await _appendLatency(avg);
@@ -476,6 +489,21 @@ class IpPurityService {
     return null;
   }
 
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
+    if (value is String && value.trim().startsWith('{')) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is Map) {
+          return Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+    }
+    return <String, dynamic>{};
+  }
+
   Future<IpPurityResult> checkAll({
     String? knownIp,
     int? localProxyPort,
@@ -486,8 +514,11 @@ class IpPurityService {
 
     String targetIp = (knownIp ?? '').trim();
     if (targetIp.isEmpty) {
-      final ipRes = await dio.get<String>('https://api4.ipify.org');
-      targetIp = (ipRes.data ?? '').trim();
+      final ipRes = await dio.get(
+        'https://api4.ipify.org',
+        options: Options(responseType: ResponseType.plain),
+      );
+      targetIp = (ipRes.data?.toString() ?? '').trim();
     }
     if (targetIp.isEmpty) {
       throw Exception('无法获取当前出口 IPv4');
@@ -499,9 +530,7 @@ class IpPurityService {
       final rawCache = prefs.getString(cacheKey);
       if (rawCache != null) {
         try {
-          final cached = IpPurityResult.fromJson(
-            jsonDecode(rawCache) as Map<String, dynamic>,
-          );
+          final cached = IpPurityResult.fromJson(_asMap(rawCache));
           final age = DateTime.now().difference(cached.checkedAt);
           if (age.inHours < config.cacheHours) {
             return cached;
@@ -517,23 +546,23 @@ class IpPurityService {
 
     final ipv6Future = _detectIpv6(dio);
     final platformsFuture = probePlatforms(localProxyPort: localProxyPort);
-    final ipapiFuture = dio.get>(
+    final ipapiFuture = dio.get(
       'https://api.ipapi.is/',
       queryParameters: ipapiQuery,
     );
 
     final ipapiRes = await ipapiFuture;
-    final ipapiData = ipapiRes.data ?? <String, dynamic>{};
-    final location = (ipapiData['location'] as Map<String, dynamic>?) ?? {};
-    final company = (ipapiData['company'] as Map<String, dynamic>?) ?? {};
-    final asnMap = (ipapiData['asn'] as Map<String, dynamic>?) ?? {};
+    final ipapiData = _asMap(ipapiRes.data);
+    final location = _asMap(ipapiData['location']);
+    final company = _asMap(ipapiData['company']);
+    final asnMap = _asMap(ipapiData['asn']);
 
     int? abuseScore;
     int? abuseReports;
     String usageType = '';
     if (config.abuseIpdbKey.isNotEmpty) {
       try {
-        final abuseRes = await dio.get>(
+        final abuseRes = await dio.get(
           'https://api.abuseipdb.com/api/v2/check',
           queryParameters: {
             'ipAddress': targetIp,
@@ -546,8 +575,8 @@ class IpPurityService {
             },
           ),
         );
-        final abuseData =
-            (abuseRes.data?['data'] as Map<String, dynamic>?) ?? {};
+        final abuseRoot = _asMap(abuseRes.data);
+        final abuseData = _asMap(abuseRoot['data']);
         abuseScore = abuseData['abuseConfidenceScore'] as int?;
         abuseReports = abuseData['totalReports'] as int?;
         usageType = abuseData['usageType'] as String? ?? '';
